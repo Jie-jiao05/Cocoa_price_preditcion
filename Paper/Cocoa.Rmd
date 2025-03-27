@@ -1,0 +1,80 @@
+---
+title: "Cocoa Price Prediction Model for Ghana"
+subtitle: "Forecasting Cocoa Price Flutuation Using Time Series"
+author: 
+  - Shanjie Jiao
+thanks: "Code and data are available at: https://github.com/Jie-jiao05/Cocoa_price_preditcion."
+date: today
+date-format: long
+abstract: ""
+format:
+  pdf:
+    fig-pos: H
+toc: true
+number-sections: true
+bibliography: references.bib
+---
+```{r}
+#| include: false
+#| warning: false
+#| message: false
+#for package
+library(tidyverse)
+library(lubridate)
+
+
+```
+
+```{r}
+#| include: false
+#| warning: false
+#| message: false
+
+# Cleaning and Loading
+price_data <- read.csv("~/Cocoa_price_preditcion/Data/Daily_Prices_ICCO.csv")
+climate_data <- read.csv("~/Cocoa_price_preditcion/Data/Ghana_data.csv")
+
+# Rename the price column and clean data
+price <- price_data %>%
+  rename(
+    Date = Date,
+    Price = `ICCO.daily.price..US..tonne.`
+  ) %>%
+  mutate(
+    Date = dmy(Date),  # Because the format is "dd/mm/yyyy"
+    Price = parse_number(Price)  # Removes commas and converts to numeric
+  )
+
+# Clean the date and convert to numeric types if needed
+climate <- climate_data %>%
+  mutate(
+    DATE = ymd(DATE),  # Already in YYYY-MM-DD
+    PRCP = as.numeric(PRCP),
+    TAVG = as.numeric(TAVG),
+    TMAX = as.numeric(TMAX),
+    TMIN = as.numeric(TMIN)
+  )
+ 
+plot(price)
+plot(climate)
+```
+
+# Introduction
+
+# Literature Review
+
+# Methodology
+
+# Data
+
+# Forecasting and Results
+
+## Model training and validation 
+
+## Performance evaluation
+
+# Discussion
+
+# Conclusion
+
+# Appendix {-}
