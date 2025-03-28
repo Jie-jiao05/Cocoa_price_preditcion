@@ -1,6 +1,9 @@
-price_data <- read.csv("~/Cocoa_price_preditcion/Data/Daily_Prices_ICCO.csv")
-climate_data <- read.csv("~/Cocoa_price_preditcion/Data/Ghana_data.csv")
+library(tidyverse)
+library(lubridate)
 
+price_data <- read.csv("~/Cocoa_price_preditcion/Data/Origion_data/Daily_Prices_ICCO.csv")
+climate_data <- read.csv("~/Cocoa_price_preditcion/Data/Origion_data/Ghana_data.csv")
+dollar <- read.csv("~/Cocoa_price_preditcion/Data/Origion_data/US_Dollar_index_from2006.csv")
 
 price <- price_data %>%
   rename(
@@ -22,5 +25,15 @@ climate <- climate_data %>%
     TMIN = as.numeric(TMIN)
   )
 
-write_csv(climate,"~/Cocoa_price_preditcion/Data/climate.csv" )
-write_csv(price,"~/Cocoa_price_preditcion/Data/price.csv" )
+
+dollar <- dollar %>%
+  mutate(
+    Date = ymd(observation_date),
+    Dollar_index = as.numeric(DTWEXBGS)
+  )
+  
+
+
+write_csv(climate,"~/Cocoa_price_preditcion/Data/Cleaned_data/climate.csv" )
+write_csv(price,"~/Cocoa_price_preditcion/Data/Cleaned_data/price.csv" )
+write_csv(dollar,"~/Cocoa_price_preditcion/Data/Cleaned_data/dollar_index.csv" )

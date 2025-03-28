@@ -33,8 +33,8 @@ library(lubridate)
 #| message: false
 
 # Loading
-price <- read.csv("~/Cocoa_price_preditcion/Data/price.csv")
-climate <- read.csv("~/Cocoa_price_preditcion/Data/climate.csv" )
+price <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/price.csv")
+climate <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/climate.csv" )
 ```
 
 # Introduction
