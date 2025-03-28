@@ -3,6 +3,9 @@ title: "Cocoa Price Prediction Model for Ghana"
 subtitle: "Forecasting Cocoa Price Flutuation Using Time Series"
 author: 
   - Shanjie Jiao
+  - Edward Hong
+  - Lilian Sun
+  - Haoya Wang
 thanks: "Code and data are available at: https://github.com/Jie-jiao05/Cocoa_price_preditcion."
 date: today
 date-format: long
@@ -18,7 +21,7 @@ bibliography: references.bib
 #| include: false
 #| warning: false
 #| message: false
-#for package
+#Package only
 library(tidyverse)
 library(lubridate)
 
@@ -30,33 +33,9 @@ library(lubridate)
 #| warning: false
 #| message: false
 
-# Cleaning and Loading
-price_data <- read.csv("~/Cocoa_price_preditcion/Data/Daily_Prices_ICCO.csv")
-climate_data <- read.csv("~/Cocoa_price_preditcion/Data/Ghana_data.csv")
-
-# Rename the price column and clean data
-price <- price_data %>%
-  rename(
-    Date = Date,
-    Price = `ICCO.daily.price..US..tonne.`
-  ) %>%
-  mutate(
-    Date = dmy(Date),  # Because the format is "dd/mm/yyyy"
-    Price = parse_number(Price)  # Removes commas and converts to numeric
-  )
-
-# Clean the date and convert to numeric types if needed
-climate <- climate_data %>%
-  mutate(
-    DATE = ymd(DATE),  # Already in YYYY-MM-DD
-    PRCP = as.numeric(PRCP),
-    TAVG = as.numeric(TAVG),
-    TMAX = as.numeric(TMAX),
-    TMIN = as.numeric(TMIN)
-  )
- 
-plot(price)
-plot(climate)
+# Loading
+price <- read.csv("~/Cocoa_price_preditcion/Data/price.csv")
+climate <- read.csv("~/Cocoa_price_preditcion/Data/climate.csv" )
 ```
 
 # Introduction
