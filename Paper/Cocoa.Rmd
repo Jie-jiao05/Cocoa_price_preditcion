@@ -21,11 +21,10 @@ bibliography: references.bib
 #| include: false
 #| warning: false
 #| message: false
+
 #Package only
 library(tidyverse)
 library(lubridate)
-
-
 ```
 
 ```{r}
