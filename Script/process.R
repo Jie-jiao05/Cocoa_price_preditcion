@@ -108,5 +108,10 @@ PRCP_filtered <- PRCP_monthly %>%
 
 write_csv(PRCP_monthly, "~/Cocoa_price_preditcion/Data/Filtered_data/PRCP.csv")
 
+#####################
+Fert<-read_csv("~/Cocoa_price_preditcion/Data/Cleaned_data/Monthly_Fertilizer_Data.csv")
 
+write_csv(Fert, "~/Cocoa_price_preditcion/Data/Filtered_data/Fert.csv")
+
+############
 #dollar <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/dollar_index.csv")

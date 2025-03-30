@@ -31,10 +31,18 @@ library(lubridate)
 #| include: false
 #| warning: false
 #| message: false
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(tseries)
 
 # Loading
 price <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/price.csv")
 climate <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/climate.csv" )
+
+
+
+
 ```
 
 # Introduction
