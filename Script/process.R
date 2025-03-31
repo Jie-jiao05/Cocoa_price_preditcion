@@ -28,8 +28,8 @@ write_csv(price, "~/Cocoa_price_preditcion/Data/Filtered_data/Price.csv")
 
 ##################
 
+# Load the climate data
 climate_data <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/climate.csv")
-
 
 # Ensure DATE and TAVG are properly formatted
 climate_data <- climate_data %>%
@@ -55,12 +55,15 @@ monthly_climate <- daily_avg %>%
   ) %>%
   ungroup()
 
+# Save full monthly data
 write_csv(monthly_climate, "~/Cocoa_price_preditcion/Data/Cleaned_data/climate_monthly.csv")
 
-monthly_climate <- monthly_climate %>%
+# Filter for data from 2015 onward
+monthly_climate_filtered <- monthly_climate %>%
   filter(Month >= as.Date("2015-01-01"))
 
-write_csv(climate, "~/Cocoa_price_preditcion/Data/Filtered_data/Climate.csv")
+# Save filtered data
+write_csv(monthly_climate_filtered, "~/Cocoa_price_preditcion/Data/Filtered_data/Climate.csv")
 
 #################
 macro <- read_csv("~/Cocoa_price_preditcion/Data/Origion_data/Index.csv")
@@ -92,21 +95,25 @@ macro_monthly <- macro_monthly %>%
 write_csv(macro_monthly, "~/Cocoa_price_preditcion/Data/Filtered_data/Indiex.csv")
 
 ################
+# Load the original PRCP data
 PRCP <- read_csv("~/Cocoa_price_preditcion/Data/Origion_data/PRCP_monthly.csv")
 
+# Convert to proper types and format
 PRCP_monthly <- PRCP %>%
   mutate(
-    date = as.Date(paste0(date, "-01")),  # Convert to Date
-    prep = as.numeric(prep)               # Ensure numeric type
+    date = as.Date(paste0(date, "-01")),  # Convert YYYY-MM to Date (first of month)
+    prep = as.numeric(prep)               # Ensure numeric precipitation
   )
 
-
+# Save cleaned monthly data
 write_csv(PRCP_monthly, "~/Cocoa_price_preditcion/Data/Cleaned_data/PRCP_monthly.csv")
 
+# Filter from 2015 onward
 PRCP_filtered <- PRCP_monthly %>%
   filter(date >= as.Date("2015-01-01"))
 
-write_csv(PRCP_monthly, "~/Cocoa_price_preditcion/Data/Filtered_data/PRCP.csv")
+# Save the filtered version
+write_csv(PRCP_filtered, "~/Cocoa_price_preditcion/Data/Filtered_data/PRCP.csv")
 
 #####################
 Fert<-read_csv("~/Cocoa_price_preditcion/Data/Cleaned_data/Monthly_Fertilizer_Data.csv")
@@ -114,4 +121,44 @@ Fert<-read_csv("~/Cocoa_price_preditcion/Data/Cleaned_data/Monthly_Fertilizer_Da
 write_csv(Fert, "~/Cocoa_price_preditcion/Data/Filtered_data/Fert.csv")
 
 ############
+
+Production<-read_csv("~/Cocoa_price_preditcion/Data/Cleaned_data/cocoa_bean_production_clean.csv")
+
+# Clean column names if needed
+colnames(Production) <- c("Entity", "Code", "Year", "Production_tonnes")
+
+# Convert production to numeric
+Production$Production_tonnes <- as.numeric(Production$Production_tonnes)
+
+# Define seasonal monthly weights
+monthly_weights <- c(
+  `1` = 0.15,
+  `2` = 0.15,
+  `3` = 0.10,
+  `4` = 0.00,
+  `5` = 0.05,
+  `6` = 0.10,
+  `7` = 0.10,
+  `8` = 0.05,
+  `9` = 0.00,
+  `10` = 0.10,
+  `11` = 0.10,
+  `12` = 0.10
+)
+
+# Expand data to monthly using weights
+monthly_df <- Production %>%
+  rowwise() %>%
+  do({
+    year_row <- .
+    tibble(
+      Entity = year_row$Entity,
+      Code = year_row$Code,
+      Date = seq.Date(as.Date(paste0(year_row$Year, "-01-01")), as.Date(paste0(year_row$Year, "-12-01")), by = "month"),
+      Monthly_Production_tonnes = year_row$Production_tonnes * monthly_weights
+    )
+  }) %>%
+  ungroup()
+
+write_csv(monthly_df, "~/Cocoa_price_preditcion/Data/Filtered_data/Production.csv")
 #dollar <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/dollar_index.csv")
