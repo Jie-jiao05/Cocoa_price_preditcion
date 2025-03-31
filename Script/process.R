@@ -161,4 +161,10 @@ monthly_df <- Production %>%
   ungroup()
 
 write_csv(monthly_df, "~/Cocoa_price_preditcion/Data/Filtered_data/Production.csv")
+
+###############
+Yield<-read_csv("~/Cocoa_price_preditcion/Data/Cleaned_data/tonnes_per_hectare.csv")
+
+write_csv(Yield, "~/Cocoa_price_preditcion/Data/Filtered_data/Yield.csv")
+
 #dollar <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/dollar_index.csv")
