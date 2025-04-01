@@ -4,24 +4,22 @@ library(dplyr)
 library(tidyr)
 library(lubridate)
 
-price_data <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/price.csv")
+library(dplyr)
+library(lubridate)
+library(readr)
 
-## transform into monthly avg price
+price_data <- read_csv("~/Cocoa_price_preditcion/Data/Cleaned_data/price.csv")
 
-# Convert Date column to Date type
-price_data <- price_data %>%
-  mutate(Date = as.Date(Date))
-
-# Create a new column for year-month and get the first day of each month
 monthly <- price_data %>%
-  mutate(Month = floor_date(Date, unit = "month")) %>%
+  mutate(Date = as.Date(Date),
+         Month = ceiling_date(Date, unit = "month") - days(1)) %>%
   group_by(Month) %>%
   summarise(Monthly_Avg = mean(Price, na.rm = TRUE)) %>%
   ungroup()
 
 write_csv(monthly, "~/Cocoa_price_preditcion/Data/Cleaned_data/price_monthly.csv")
 
-price <- monthly_climate %>%
+price <- monthly %>%
   filter(Month >= as.Date("2015-01-01"))
 
 write_csv(price, "~/Cocoa_price_preditcion/Data/Filtered_data/Price.csv")

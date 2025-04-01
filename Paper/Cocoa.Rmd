@@ -17,15 +17,7 @@ toc: true
 number-sections: true
 bibliography: references.bib
 ---
-```{r}
-#| include: false
-#| warning: false
-#| message: false
 
-#Package only
-library(tidyverse)
-library(lubridate)
-```
 
 ```{r}
 #| include: false
@@ -35,32 +27,203 @@ library(tidyverse)
 library(lubridate)
 library(forecast)
 library(tseries)
-
+library(mgcv)
+library(zoo)
+library(tseries)
+library(astsa)
 # Loading
-price <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/price.csv")
-climate <- read.csv("~/Cocoa_price_preditcion/Data/Cleaned_data/climate.csv" )
-
-
-
+model <- read.csv("~/Cocoa_price_preditcion/Data/Model_data/model.csv")
+test <- read.csv("~/Cocoa_price_preditcion/Data/Model_data/test.csv")
+train <- read.csv("~/Cocoa_price_preditcion/Data/Model_data/train.csv")
 
 ```
 
-# Introduction
+# Model
+This study aims to develop a predictive model to capture future fluctuations in cocoa prices. To enhance the model's forecasting accuracy, a range of exogenous variables are considered, spanning both agricultural asepcts and macroeconomic dimensions. Climatic factors such as precipitation and temperature are considered due to their indirect influence on market prices through their effects on cocoa yield, which is considered as the most important factor pushing cocoa price. In addition, agricultural indicators—including labor input, cultivated area, yield per hectare—as well as productivity-related metrics such as total factor productivity (TFP), are integrated into the framework to comprehensively evaluate their potential impact on price. By incorporating these variables, we hope to explore how these environmental and economic variables explain their impact on cocoa prices.
 
-# Literature Review
+To investigate the potential impact of external variables on cocoa prices, the Generalized Additive Model (GAM), Autoregressive Integrated Moving Average (ARIMA), and Generalized Autoregressive Conditional Heteroskedasticity (GARCH) models are considered as candidate approaches.
 
-# Methodology
+## Model Set-up
+### Generalized Additive Model (GAM)
+Price, as the response variable in this study, is continuous, strictly positive, and reflects actual measured values rather than frequencies or binary outcomes for decision-making purposes. Thus, the Gamma distribution is selected. The use of a log link function ensures that predicted prices remain positive and allows the model to capture nonlinear and multiplicative relationships between the response and explanatory variables. This makes the Gamma distribution a theoretically appropriate and practically robust choice for modeling the influence of external factors on cocoa prices.
 
-# Data
+Since the dataset is organized by month (from January 2015 to December 2023) and includes only the Ghana region, there is no hierarchical or nested structure in the data. Furthermore, the temporal dimension is explicitly available through the monthly time variable. Therefore, random effects are not included in the model; instead, we focus on fixed effects, along with a smooth function of time. The smooth term is incorporated to capture nonlinear trends in the response over time. Additionally, since the outcome variable is cocoa price, a continuous quantity rather than a rate or count so offset term will not be considered in the model.
 
-# Forecasting and Results
+The model is defined as follows:
 
-## Model training and validation 
+$$
+\begin{aligned}
+Y_t \mid U &\sim \text{Gamma}(\mu_t, \theta), \quad g(\mu_t) = X_t \beta + U(t) \\
+g(\mu_t) = \log(\mu_t) &= 
+\beta_0 + s_1(\text{Month\_Index}_t) + s_2(\text{Temp}_t) + s_3(\text{Fert}_t) + s_4(\text{TFP\_Index}_t) \\
+&+ s_5(\text{Capital\_Index}_t) + s_6(\text{Land\_Q}_t) + s_7(\text{Labor\_Q}_t) + s_8(\text{Cropland\_Q}_t) \\
+&+ s_9(\text{prep}_t) + \beta_{10} \cdot \text{Production\_tonnes}_t + \beta_{11} \cdot \text{Yield\_tonnes\_per\_hectare}_t \\
+&+ U(t) \\
+U(t) &\sim \text{IWP}_2(\sigma) \quad \text{(Smooth Trend)}
+\end{aligned}
+$$
 
-## Performance evaluation
+```{r}
+#| message: false
+#| warning: false
+#| include: false
+train$Date <- as.Date(train$Date)  # Convert Date column
+train$Month_Index <- as.numeric(as.factor(train$Date))  # Numeric index for smooth time trend
 
-# Discussion
+gam_model <- gam(Price ~ 
+                   s(Month_Index) +
+                   s(Temp) +
+                   s(Fert) +
+                   s(TFP_Index) +
+                   s(Capital_Index) +
+                   s(Land_Q) +
+                   s(Labor_Q) +
+                   s(Cropland_Q) +
+                   s(prep) +
+                   Production_tonnes +               # use linear
+                   Yield_tonnes_per_hectare,         # use linear
+                 family = Gamma(link = "log"),
+                 data = train)
+```
+```{r}
+#| echo: false
+summary(gam_model)
+AIC(gam_model)
 
-# Conclusion
+```
+
+### Autoregressive Integrated Moving Average (ARIMA)
+The second model we select is ARIMA, as our dataset provides accurate monthly records from January 2015 to December 2023. ARIMA effectively models how past values influence future outcomes, making it ideal for capturing temporal dependencies and trends. It also handles non-stationarity through differencing, which stabilizes the data and facilitates more reliable model construction.
+
+From the initial plot of the cocoa price data, there is no clear evidence of a seasonal trend. The series appears to fluctuate irregularly over time. However, the ACF and PACF plots of the original (undifferenced) series reveal signs of non-stationarity, as the autocorrelations decay slowly. To address this, we apply first-order differencing, which yields a series that appears stationary. The ACF and PACF plots of the differenced series indicate an autoregressive structure of order 2. Based on these diagnostics, we propose an ARIMA(2,1,0) model for the cocoa price series.
+
+The model is defined as follows:
+
+$$
+\Delta y_t = \phi_1 \Delta y_{t-1} + \phi_2 \Delta y_{t-2} + \varepsilon_t
+$$
+
+
+
+```{r}
+#| echo: false
+
+
+# ARIMA(2,1,0) without seasonal component
+arima_model<-arima(train$Price, order = c(2, 1, 0))
+
+sarima_model<-sarima(train$Price, 2, 1, 0, 0, 0, 0, 0)
+```
+### Generalized Autoregressive Conditional Heteroskedasticity (GARCH)
+While ARIMA and GAM models primarily focus on modeling the conditional mean of a time series, they typically assume homoskedasticity — that is, constant variance of the error terms over time. However, in financial and commodity markets such as cocoa prices, time series often exhibit heteroskedasticity, particularly in the form of volatility clustering, where periods of high volatility tend to cluster together, as do periods of low volatility. To address this, the third model introduced in this study is the GARCH model, which is specifically designed to capture such dynamic behavior in volatility.
+
+In the context of this research, modeling the volatility of cocoa prices is crucial for understanding the risks and uncertainties associated with price movements over time. The GARCH framework allows the conditional variance to evolve dynamically, providing a more realistic and robust approach to capturing the stylized facts of the cocoa price series. By accommodating time-varying volatility, the GARCH model serves as an essential complement to mean-based models and enhances the overall forecasting framework. A generalized GARCH(1,1) model is combined with an ARMA(1,0) structure in the mean equation to account for potential autocorrelation in the return series without overcomplicating the model.
+
+$$
+\begin{aligned}
+r_t &= \sigma_t \varepsilon_t, \quad \varepsilon_t \sim \mathcal{N}(0,1) \\
+\sigma_t^2 &= \alpha_0 + \alpha_1 r_{t-1}^2 + \beta_1 \sigma_{t-1}^2
+\end{aligned}
+$$
+
+```{r}
+#| echo: false
+
+library(fGarch)
+
+# Assuming your dataset is `train` and has a column "Price"
+# Step 1: Compute log returns
+returns <- diff(log(train$Price))
+returns <- na.omit(returns)
+
+# Or include AR(1) in mean equation
+ garch_model <- garchFit(~ arma(1, 0) + garch(1, 1), data = returns, cond.dist = "norm")
+
+
+```
+```{r}
+library(Metrics)
+test$Date <- as.Date(test$Date)  # Convert Date column
+test$Month_Index <- as.numeric(as.factor(test$Date))  # Numeric index for smooth time trend
+gam_pred <- predict(gam_model, newdata = test, type = "response")
+
+
+arima_pred <- forecast(arima_model, h = nrow(test))$mean
+
+garch_forecast <- predict(garch_model, n.ahead = nrow(test))
+garch_mean <- garch_forecast$meanForecast
+
+# For GAM and ARIMA (level)
+actual <- test$Price
+test_returns  <- diff(log(test$Price))
+
+rmse <- function(pred, actual) {
+  sqrt(mean((pred - actual)^2))
+}
+
+rmse_gam   <- rmse(gam_pred, actual)
+rmse_arima <- rmse(arima_pred, actual)
+
+# For GARCH — only meaningful if you're comparing returns
+rmse_garch <- rmse(garch_mean, test_returns)  # optional
+```
+
+```{r}
+
+
+test$Date <- as.Date(test$Date)
+
+# Add Month_Index if used in GAM
+test$Month_Index <- as.numeric(as.factor(test$Date))
+
+# ---- Predict from previously trained models ----
+# Replace gam_model, arima_model, garch_model with your trained model names
+
+# 1. GAM
+gam_pred <- predict(gam_model, newdata = test, type = "response")
+
+# 2. ARIMA
+arima_pred <- forecast(arima_model, h = nrow(test))$mean
+
+# 3. GARCH
+garch_forecast <- predict(garch_model, n.ahead = nrow(test))
+garch_mean_return <- garch_forecast$meanForecast
+last_price <- tail(train$Price, 1)  # use last value from training set
+garch_pred <- last_price * exp(cumsum(garch_mean_return))
+
+# ---- Calculate RMSE ----
+actual <- test$Price
+
+rmse <- function(pred, actual) sqrt(mean((pred - actual)^2))
+
+rmse_gam   <- rmse(gam_pred, actual)
+rmse_arima <- rmse(arima_pred, actual)
+rmse_garch <- rmse(garch_pred, actual)
+
+# ---- Output ----
+cat("RMSE (GAM):   ", round(rmse_gam, 4), "\n")
+cat("RMSE (ARIMA): ", round(rmse_arima, 4), "\n")
+cat("RMSE (GARCH): ", round(rmse_garch, 4), "\n")
+```
+## Final Model
+## Model Diagonistic
+
+# Results
+## Model Performance Validatioin
+## Forecasting  
+
 
 # Appendix {-}
+
+```{r}
+
+plot(model$Price)
+# Augmented Dickey-Fuller test
+acf(model$Price, main = "ACF of Original Price Series")
+pacf(model$Price, main = "PACF of Original Price Series")
+
+price_diff <- diff(train$Price)  # first-order difference
+acf(price_diff, main = "ACF of 1st Differenced Price Series")
+pacf(model$Price, main = "PACF of 1st Differenced Price Series")
+
+```
