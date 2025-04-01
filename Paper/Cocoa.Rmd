@@ -85,6 +85,7 @@ gam_model <- gam(Price ~
                  family = Gamma(link = "log"),
                  data = train)
 ```
+
 ```{r}
 #| echo: false
 summary(gam_model)
@@ -111,6 +112,17 @@ $$
 
 # ARIMA(2,1,0) without seasonal component
 arima_model<-arima(train$Price, order = c(2, 1, 0))
+# Create external regressors matrix (exclude Price and Date)
+xreg_all <- model %>% select(-Date, -Price)
+
+# Fit ARIMAX (non-seasonal) model
+arimax_model <- auto.arima(model$Price,
+                           xreg = as.matrix(xreg_all),
+                           seasonal = FALSE,
+                           stepwise = FALSE,
+                           approximation = FALSE)
+
+summary(arimax_model)
 
 sarima_model<-sarima(train$Price, 2, 1, 0, 0, 0, 0, 0)
 ```
@@ -131,16 +143,21 @@ $$
 
 library(fGarch)
 
-# Assuming your dataset is `train` and has a column "Price"
-# Step 1: Compute log returns
+# Compute log returns
 returns <- diff(log(train$Price))
 returns <- na.omit(returns)
 
-# Or include AR(1) in mean equation
- garch_model <- garchFit(~ arma(1, 0) + garch(1, 1), data = returns, cond.dist = "norm")
+# External variables (must align in length with 'returns')
+xreg_vars <- train %>%
+  select(Temp, Fert, TFP_Index, Capital_Index, Land_Q, Labor_Q,
+         Cropland_Q, prep, Production_tonnes, Yield_tonnes_per_hectare)
+
+# Remove the first row to match diff (returns is 1 row shorter)
+xreg_vars <- xreg_vars[-1, ]
 
 
 ```
+
 ```{r}
 library(Metrics)
 test$Date <- as.Date(test$Date)  # Convert Date column
@@ -175,35 +192,36 @@ test$Date <- as.Date(test$Date)
 
 # Add Month_Index if used in GAM
 test$Month_Index <- as.numeric(as.factor(test$Date))
-
-# ---- Predict from previously trained models ----
-# Replace gam_model, arima_model, garch_model with your trained model names
-
 # 1. GAM
 gam_pred <- predict(gam_model, newdata = test, type = "response")
 
-# 2. ARIMA
-arima_pred <- forecast(arima_model, h = nrow(test))$mean
+# 2. ARIMAX (with external regressors)
+xreg_test <- test %>% select(Temp, Fert, TFP_Index, Capital_Index, Land_Q,
+                             Labor_Q, Cropland_Q, prep, Production_tonnes,
+                             Yield_tonnes_per_hectare)
+
+arimax_forecast <- forecast(arimax_model, xreg = as.matrix(xreg_test), h = nrow(test))
+arimax_pred <- arimax_forecast$mean
 
 # 3. GARCH
 garch_forecast <- predict(garch_model, n.ahead = nrow(test))
 garch_mean_return <- garch_forecast$meanForecast
-last_price <- tail(train$Price, 1)  # use last value from training set
+last_price <- tail(train$Price, 1)
 garch_pred <- last_price * exp(cumsum(garch_mean_return))
 
-# ---- Calculate RMSE ----
+# ---- RMSE ----
 actual <- test$Price
-
 rmse <- function(pred, actual) sqrt(mean((pred - actual)^2))
 
 rmse_gam   <- rmse(gam_pred, actual)
-rmse_arima <- rmse(arima_pred, actual)
+rmse_arima <- rmse(arimax_pred, actual)
 rmse_garch <- rmse(garch_pred, actual)
 
 # ---- Output ----
 cat("RMSE (GAM):   ", round(rmse_gam, 4), "\n")
-cat("RMSE (ARIMA): ", round(rmse_arima, 4), "\n")
+cat("RMSE (ARIMAX):", round(rmse_arima, 4), "\n")
 cat("RMSE (GARCH): ", round(rmse_garch, 4), "\n")
+
 ```
 ## Final Model
 ## Model Diagonistic
