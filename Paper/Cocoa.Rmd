@@ -85,163 +85,418 @@ gam_model <- gam(Price ~
                  family = Gamma(link = "log"),
                  data = train)
 ```
-
 ```{r}
-#| echo: false
-summary(gam_model)
-AIC(gam_model)
+#| eval: false
+#| include: false
+# Predict using the fitted GAM model
+pred_gam <- predict(gam_model, newdata = test, type = "response")
 
+aic_gam <- AIC(gam_model)
+rmse_gam <- sqrt(mean((pred_gam - test$Price)^2))
+r2_gam <- 1 - (sum((pred_gam - test$Price)^2) / sum((test$Price - mean(test$Price))^2))
+
+aic_gam
+rmse_gam
+r2_gam
 ```
 
 ### Autoregressive Integrated Moving Average (ARIMA)
-The second model we select is ARIMA, as our dataset provides accurate monthly records from January 2015 to December 2023. ARIMA effectively models how past values influence future outcomes, making it ideal for capturing temporal dependencies and trends. It also handles non-stationarity through differencing, which stabilizes the data and facilitates more reliable model construction.
+The second model we select is an ARIMAX model. Our dataset provides accurate monthly records from January 2015 to December 2023, along with a range of potentially influential external variables such as temperature, fertilizer use, and productivity indicators. For the standard ARIMA model, which accounts only for a univariate time series, the ARIMAX framework enhances forecasting accuracy by incorporating both temporal dependencies and external factors. By addressing non-stationarity via differencing, it help to stabilizes the data and facilitates more reliable model construction.
 
-From the initial plot of the cocoa price data, there is no clear evidence of a seasonal trend. The series appears to fluctuate irregularly over time. However, the ACF and PACF plots of the original (undifferenced) series reveal signs of non-stationarity, as the autocorrelations decay slowly. To address this, we apply first-order differencing, which yields a series that appears stationary. The ACF and PACF plots of the differenced series indicate an autoregressive structure of order 2. Based on these diagnostics, we propose an ARIMA(2,1,0) model for the cocoa price series.
+From the initial plot of the cocoa price data, there is no clear evidence of a seasonal trend, as the series appears to fluctuate irregularly over time. However, the ACF and PACF plots of the original (undifferenced) series reveal signs of non-stationarity, as the ACF decay slowly. To address this, we apply first-order differencing, which yields a series that appears stationary. The ACF and PACF plots of the differenced series indicate an moving average structure of order 2. Based on these diagnostics, we propose an ARIMA(0,1,2) with external regressors model for the cocoa price series.
 
 The model is defined as follows:
 
 $$
-\Delta y_t = \phi_1 \Delta y_{t-1} + \phi_2 \Delta y_{t-2} + \varepsilon_t
-$$
-
-
-
-```{r}
-#| echo: false
-
-
-# ARIMA(2,1,0) without seasonal component
-arima_model<-arima(train$Price, order = c(2, 1, 0))
-# Create external regressors matrix (exclude Price and Date)
-xreg_all <- model %>% select(-Date, -Price)
-
-# Fit ARIMAX (non-seasonal) model
-arimax_model <- auto.arima(model$Price,
-                           xreg = as.matrix(xreg_all),
-                           seasonal = FALSE,
-                           stepwise = FALSE,
-                           approximation = FALSE)
-
-summary(arimax_model)
-
-sarima_model<-sarima(train$Price, 2, 1, 0, 0, 0, 0, 0)
-```
-### Generalized Autoregressive Conditional Heteroskedasticity (GARCH)
-While ARIMA and GAM models primarily focus on modeling the conditional mean of a time series, they typically assume homoskedasticity — that is, constant variance of the error terms over time. However, in financial and commodity markets such as cocoa prices, time series often exhibit heteroskedasticity, particularly in the form of volatility clustering, where periods of high volatility tend to cluster together, as do periods of low volatility. To address this, the third model introduced in this study is the GARCH model, which is specifically designed to capture such dynamic behavior in volatility.
-
-In the context of this research, modeling the volatility of cocoa prices is crucial for understanding the risks and uncertainties associated with price movements over time. The GARCH framework allows the conditional variance to evolve dynamically, providing a more realistic and robust approach to capturing the stylized facts of the cocoa price series. By accommodating time-varying volatility, the GARCH model serves as an essential complement to mean-based models and enhances the overall forecasting framework. A generalized GARCH(1,1) model is combined with an ARMA(1,0) structure in the mean equation to account for potential autocorrelation in the return series without overcomplicating the model.
-
-$$
 \begin{aligned}
-r_t &= \sigma_t \varepsilon_t, \quad \varepsilon_t \sim \mathcal{N}(0,1) \\
-\sigma_t^2 &= \alpha_0 + \alpha_1 r_{t-1}^2 + \beta_1 \sigma_{t-1}^2
+\Delta y_t =\ 
+& \theta_1 w_{t-1} + \theta_2 w_{t-2} \\
+& + \beta_1 \cdot \text{Temp}_t + \beta_2 \cdot \text{Fert}_t + \beta_3 \cdot \text{TFP\_Index}_t \\
+& + \beta_4 \cdot \text{Capital\_Index}_t + \beta_5 \cdot \text{Land\_Q}_t + \beta_6 \cdot \text{Labor\_Q}_t \\
+& + \beta_7 \cdot \text{Cropland\_Q}_t + \beta_8 \cdot \text{prep}_t + \beta_9 \cdot \text{Production\_tonnes}_t \\
+& + \beta_{10} \cdot \text{Yield\_tonnes\_per\_hectare}_t + w_t, \quad w_t \sim \mathcal{N}(0, \sigma^2)
 \end{aligned}
 $$
 
+
+$$
+\varepsilon_t \sim \mathcal{N}(0, \sigma^2)
+$$
+
+
 ```{r}
 #| echo: false
+library(forecast)
 
-library(fGarch)
 
-# Compute log returns
-returns <- diff(log(train$Price))
-returns <- na.omit(returns)
+# Clean model and regressors (already checked for NA)
+model_clean <- model  # (already clean from your summary)
+xreg_all <- model_clean %>% select(-Date, -Price)
 
-# External variables (must align in length with 'returns')
-xreg_vars <- train %>%
-  select(Temp, Fert, TFP_Index, Capital_Index, Land_Q, Labor_Q,
-         Cropland_Q, prep, Production_tonnes, Yield_tonnes_per_hectare)
-
-# Remove the first row to match diff (returns is 1 row shorter)
-xreg_vars <- xreg_vars[-1, ]
-
+# Fit ARIMAX(0,1,2) with fixed order and external regressors
+arimax_model <- Arima(model_clean$Price,
+                      order = c(0, 1, 2),
+                      xreg = as.matrix(xreg_all))
 
 ```
 
 ```{r}
-library(Metrics)
-test$Date <- as.Date(test$Date)  # Convert Date column
-test$Month_Index <- as.numeric(as.factor(test$Date))  # Numeric index for smooth time trend
-gam_pred <- predict(gam_model, newdata = test, type = "response")
+#| include: false
+# Step 1: Define your external regressors used in the model
+xreg_vars <- c(
+  "Temp", "Fert", "TFP_Index", "Capital_Index", "Land_Q",
+  "Labor_Q", "Cropland_Q", "prep", "Production_tonnes", 
+  "Yield_tonnes_per_hectare"
+)
+
+# Step 2: Forecast on the test set using xreg
+forecast_arimax <- forecast(arimax_model, xreg = as.matrix(test[, xreg_vars]), h = nrow(test))
+pred_arimax <- forecast_arimax$mean
+
+# Step 3: AIC (from training fit)
+aic_arimax <- AIC(arimax_model)
+
+# Step 4: RMSE (on test data)
+rmse_arimax <- sqrt(mean((pred_arimax - test$Price)^2))
+
+# Step 5: R² (on test data)
+r2_arimax <- 1 - (sum((pred_arimax - test$Price)^2) / sum((test$Price - mean(test$Price))^2))
+
+aic_arimax
+rmse_arimax
+r2_arimax
+```
+### Machine Learning --- XGBoost
+Under this research, we aim focus on accurately forecasting cocoa prices under conditions of complex and volatile market fluctuations. While traditional time series models are effective at capturing linear relationships and structured temporal dependencies, they often fall short when modeling the nonlinear dynamics commonly found in agricultural commodity markets. To address these limitations, we adopt a machine learning approach by employing an XGBoost model with lagged price features to forecast future cocoa prices. By incorporating twelve lagged values of the price series, the model effectively utilizes historical information to learn intricate patterns, address the nonlinearities previously identified, and contribute to a more robustic model.
+
+The XGBoost framework is defined as follows:
+
+$$
+\hat{y}_t = \sum_{k=1}^{K} f_k(\mathbf{x}_t), \quad f_k \in \mathcal{F}
+$$
+
+\begin{itemize}
+  \item \( \hat{y}_t \): predicted cocoa price at time \( t \)
+  \item \( \mathbf{x}_t \): feature vector consisting of lagged cocoa prices
+  \item \( f_k \): the \( k \)-th regression tree
+  \item \( \mathcal{F} \): the functional space of all possible regression trees
+  \item \( K \): total number of boosting iterations (trees)
+\end{itemize}
 
 
-arima_pred <- forecast(arima_model, h = nrow(test))$mean
+```{r}
+#| include: false
 
-garch_forecast <- predict(garch_model, n.ahead = nrow(test))
-garch_mean <- garch_forecast$meanForecast
-
-# For GAM and ARIMA (level)
-actual <- test$Price
-test_returns  <- diff(log(test$Price))
-
-rmse <- function(pred, actual) {
-  sqrt(mean((pred - actual)^2))
+library(dplyr)
+library(xgboost)
+cocoa_data <- model
+# Create lag features - here we use 12 lags (you can adjust look_back as needed)
+look_back <- 12
+for (lag_i in 1:look_back) {
+  cocoa_data <- cocoa_data %>%
+    mutate(!!paste0("lag_", lag_i) := dplyr::lag(Price, n = lag_i))
 }
 
-rmse_gam   <- rmse(gam_pred, actual)
-rmse_arima <- rmse(arima_pred, actual)
 
-# For GARCH — only meaningful if you're comparing returns
-rmse_garch <- rmse(garch_mean, test_returns)  # optional
+# Remove rows with missing values (first 'look_back' rows will have NA)
+cocoa_data <- na.omit(cocoa_data)
+
+# Check the first few rows to confirm lag features
+head(cocoa_data)
+
+# Use an 80/20 train-test split
+train_index <- sample(seq_len(nrow(cocoa_data)), size = 0.8 * nrow(cocoa_data))
+train_data <- cocoa_data[train_index, ]
+test_data <- cocoa_data[-train_index, ]
+
+# Prepare the predictor matrix (features) and response vector (target)
+feature_cols <- paste0("lag_", 1:look_back)
+
+# Convert to matrix format for xgboost
+train_matrix <- as.matrix(train_data[, feature_cols])
+train_label <- train_data$Price
+
+test_matrix <- as.matrix(test_data[, feature_cols])
+test_label <- test_data$Price
+
+# Create DMatrix objects for xgboost
+dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
+dtest  <- xgb.DMatrix(data = test_matrix, label = test_label)
+
+# Set XGBoost parameters
+params <- list(
+  objective = "reg:squarederror",  # regression
+  eval_metric = "rmse",             # evaluation metric: Root Mean Squared Error
+  eta = 0.1,                        # learning rate
+  max_depth = 5                     # tree depth
+)
+
+# Train the model
+xgb_model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 100,
+  watchlist = list(train = dtrain, test = dtest),
+  early_stopping_rounds = 10,
+  print_every_n = 10
+)
+
+predictions <- predict(xgb_model, newdata = test_matrix)
+
 ```
 
 ```{r}
+#| eval: false
+#| include: false
+y_actual <- test_data$Price
+y_pred   <- predictions
 
+# Calculate Root Mean Squared Error (RMSE)
+rmse <- sqrt(mean((y_actual - y_pred)^2))
 
-test$Date <- as.Date(test$Date)
+# Calculate Mean Absolute Error (MAE)
+mae <- mean(abs(y_actual - y_pred))
 
-# Add Month_Index if used in GAM
-test$Month_Index <- as.numeric(as.factor(test$Date))
-# 1. GAM
-gam_pred <- predict(gam_model, newdata = test, type = "response")
+# Calculate Mean Absolute Percentage Error (MAPE)
+# Be careful if any actual value is zero, which would cause division by zero.
+mape <- mean(abs((y_actual - y_pred) / y_actual)) * 100
 
-# 2. ARIMAX (with external regressors)
-xreg_test <- test %>% select(Temp, Fert, TFP_Index, Capital_Index, Land_Q,
-                             Labor_Q, Cropland_Q, prep, Production_tonnes,
-                             Yield_tonnes_per_hectare)
+# Calculate R-squared (Coefficient of Determination)
+ss_res <- sum((y_actual - y_pred)^2)
+ss_tot <- sum((y_actual - mean(y_actual))^2)
+r_squared <- 1 - (ss_res / ss_tot)
 
-arimax_forecast <- forecast(arimax_model, xreg = as.matrix(xreg_test), h = nrow(test))
-arimax_pred <- arimax_forecast$mean
-
-# 3. GARCH
-garch_forecast <- predict(garch_model, n.ahead = nrow(test))
-garch_mean_return <- garch_forecast$meanForecast
-last_price <- tail(train$Price, 1)
-garch_pred <- last_price * exp(cumsum(garch_mean_return))
-
-# ---- RMSE ----
-actual <- test$Price
-rmse <- function(pred, actual) sqrt(mean((pred - actual)^2))
-
-rmse_gam   <- rmse(gam_pred, actual)
-rmse_arima <- rmse(arimax_pred, actual)
-rmse_garch <- rmse(garch_pred, actual)
-
-# ---- Output ----
-cat("RMSE (GAM):   ", round(rmse_gam, 4), "\n")
-cat("RMSE (ARIMAX):", round(rmse_arima, 4), "\n")
-cat("RMSE (GARCH): ", round(rmse_garch, 4), "\n")
+# Print the metrics
+cat("RMSE:", round(rmse, 2), "\n")
+cat("MAE:", round(mae, 2), "\n")
+cat("MAPE:", round(mape, 2), "%\n")
+cat("R-squared:", round(r_squared, 2), "\n")
 
 ```
+
+
+
 ## Final Model
-## Model Diagonistic
+The performance metrics for the three models—ARIMAX, GAM, and the machine learning-based XGBoost—are summarized in @tbl-model_result. Among these, the XGBoost model demonstrates superior predictive performance, achieving the lowest RMSE (148.94) and the highest R² (0.92), illustrating that approximately 92% of the variation in cocoa prices in the test set can be explained by this model. In addition, the XGBoost model achieves a considerably low MAE (107.15) and MAPE (4.08%), further validating its accuracy and reliability. The consistently strong performance across multiple evaluation metrics highlights XGBoost's capability to deliver precise and robust forecasts.
+In contrast, the traditional statistical models exhibit higher error rates and negative R² values, suggesting poor generalization to out-of-sample data. Given these findings, the XGBoost model is selected as the final forecasting model for this study
+```{r}
+#| label: tbl-model_result
+#| echo: false
+#| tbl-align: center
+#| warning: false
+#| message: false
 
+library(knitr)
+
+# Create model performance summary table
+results <- data.frame(
+  Model = c("XGBoost", "ARIMAX", "GAM"),
+  AIC = c(NA, 1357.807, 953.5679),              # AIC not applicable for XGBoost
+  RMSE = c(148.94, 1588.224, 682.3146),
+  MAE = c(107.15, NA, NA),                      # Only XGBoost reported MAE
+  MAPE = c("4.08%", NA, NA),                    # Only XGBoost reported MAPE
+  R_squared = c(0.92, -11.86373, -1.374175)
+)
+
+# Print the table using kable (which supports centering)
+kable(results, caption = "Model Result", digits = 3, align = "c")
+
+```
 # Results
-## Model Performance Validatioin
-## Forecasting  
+## Model Performance Validation
+@fig-actpre The predicted cocoa prices generated by our XGBoost model align closely with the actual observed values across the entire time period. This result highly align with the model’s statistical performance, as reflected by a high R² value of 0.92. Where our model demonstrates strong capability in capturing both short-term fluctuations and long-term trends in cocoa price.
 
+```{r}
+#| label: fig-actpre
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: Actual vs. Predicted Cocoa Prices
+#| fig-height: 3
+#| fig-width: 8
+library(ggplot2)
+library(scales)
+
+df_plot <- data.frame(
+  Date = test_data$Date,
+  Actual = test_label,
+  Predicted = predictions
+)
+
+df_plot$Date <- as.Date(df_plot$Date)
+
+ggplot() +
+  geom_line(
+    data = df_plot,
+    aes(x = Date, y = Actual, color = "Actual", group = 1),
+    lwd = 1
+  ) +
+  geom_line(
+    data = df_plot,
+    aes(x = Date, y = Predicted, color = "Predicted", group = 2),
+    lwd = 1, linetype = "dashed"
+  ) +
+  labs(
+    title = "Actual vs. Predicted Cocoa Prices",
+    x = "Year",
+    y = "Cocoa Price"
+  ) +
+  scale_color_manual(values = c("Actual" = "blue", "Predicted" = "red")) +
+  scale_x_date(date_labels = "%Y") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.title.position = "plot"  # ✅ Fixes true centering
+  )
+
+```
+## Model Lag Check
+It is evident from @fig-lag that lag_1 by far has the highest importance, our model heavily relieson the cocoa price from one month ago. This finding aligns with real-world financial behavior, where more recent observations typically have a stronger influence on current prices, while distant past data tends to carry less predictive power. Conversely, some lag features such as lag_11 and lag_2 show near-zero contribution, suggesting that the model did not find time at that lag is significant for prediction.
+```{r}
+#| label: fig-lag
+#| fig-cap: Model lag information
+#| echo: false
+#| fig-align: center
+
+library(ggplot2)
+
+# Prepare importance data
+importance_matrix <- xgb.importance(model = xgb_model)
+
+# Take top 12 features
+top_features <- importance_matrix[1:12, ]
+
+# Plot with ggplot2
+ggplot(top_features, aes(x = reorder(Feature, Gain), y = Gain)) +
+  geom_col(fill = "grey") +
+  coord_flip() +
+  labs(
+    title = "Lag Feature Importance (XGBoost)",
+    x = "Lag Feature",
+    y = "Relative Importance"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text = element_text(size = 10)
+  )
+
+```
+
+
+## Residual Check
+To evaluate the adequacy of the XGBoost model, we conducted a residual diagnostic analysis using a histogram, residuals vs. predicted plot, and the autocorrelation function (ACF) of the residuals. 
+
+@fig-his shows that the residuals are approximately symmetrically distributed around zero, indicating that the model does not systematically over or under predict. The @fig-dot residuals vs. predicted plot reveals no discernible pattern or signs of heteroskedasticity, suggesting that the variance of the errors remains consistent across different levels of predicted values. However, it is important to note that due to the limited size of the dataset, only a small portion was allocated to the test set, which may affect the robustness of these diagnostics. Lastly, @fig-acf the ACF plot of the residuals shows no significant autocorrelation beyond lag zero, confirming that the model has effectively captured the temporal structure in the data.
+
+```{r}
+#| label: fig-his
+#| fig-cap: Residual Histogram
+#| echo: false
+#| fig-align: center
+
+residuals <- test_label - predictions
+
+# Histogram of residuals
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+
+```
+
+```{r}
+#| label: fig-dot
+#| fig-cap: Dot Plot of Residuals vs Predicted Value
+#| echo: false
+#| fig-align: center
+# Residuals vs predicted
+plot(predictions, residuals, main = "Residuals vs Predicted", 
+     xlab = "Predicted", ylab = "Residuals")
+abline(h = 0, col = "red")
+
+```
+```{r}
+#| label: fig-acf
+#| fig-cap: Residual ACF
+#| echo: false
+#| fig-align: center
+acf(residuals, main = "ACF of Residuals")
+
+
+```
+## Forecasting  
+@fig-pre  illustrates the projected cocoa prices generated by the XGBoost model for the next 2 years (2025-02 to 2026-12), with a 95% confidence interval shaded in red. The forecast demonstrates a downward trend following the recent price peak, while the confidence band captures the expected range of uncertainty in future price movements.
+
+Following a sharp increase in cocoa prices toward the end of 2023, the model forecasts a downward trend, with prices gradually returning to levels comparable to those seen in 2023-01. In early 2025, the model suggests a brief rebound, followed by another period of decline. It is important to note that future price in realistic will inevitably be influenced by seasonal fluctuations in production, changes in labor and transportation costs, and broader macroeconomic conditions affecting global commodity markets. These predictions are based solely on the available dataset and should be interpreted as model-based estimations rather than a definitive forecasts.
+
+
+```{r}
+#| label: fig-pre
+#| echo: false
+#| fig-align: center
+#| fig-cap: Cocoa Price Prediction Using XGBoost with Confidence Interval
+# Step 1: Compute residual standard deviation
+residuals <- test_label - predictions
+resid_sd <- sd(residuals, na.rm = TRUE)
+z_val <- 1.96  # for 95% confidence interval
+
+# Step 2: Forecast future values
+cocoa_data$Date <- as.Date(cocoa_data$Date)
+last_obs <- cocoa_data %>% tail(1)
+look_back <- 12
+feature_cols <- paste0("lag_", 1:look_back)
+lag_vector <- as.numeric(last_obs[feature_cols])
+forecast_horizon <- 24
+future_forecasts <- numeric(forecast_horizon)
+future_upper <- numeric(forecast_horizon)
+future_lower <- numeric(forecast_horizon)
+last_date <- last_obs$Date
+
+for (i in 1:forecast_horizon) {
+  dfuture <- xgb.DMatrix(data = matrix(lag_vector, nrow = 1))
+  pred <- predict(xgb_model, newdata = dfuture)
+  
+  future_forecasts[i] <- pred
+  future_upper[i] <- pred + z_val * resid_sd
+  future_lower[i] <- pred - z_val * resid_sd
+  
+  lag_vector <- c(lag_vector[-1], pred)
+}
+
+# Step 3: Build the forecast dataframe
+future_dates <- seq(last_date %m+% months(1), by = "month", length.out = forecast_horizon)
+
+forecast_df <- data.frame(
+  Date = future_dates,
+  Forecast = future_forecasts,
+  Lower = future_lower,
+  Upper = future_upper
+)
+
+# Step 4: Plot
+ggplot() +
+  geom_line(data = cocoa_data, aes(x = Date, y = Price, color = "Actual"), linewidth = 1.2) +
+  geom_line(data = forecast_df, aes(x = Date, y = Forecast, color = "Forecast"),
+            linewidth = 1.2, linetype = "dashed", alpha = 0.9) +
+  geom_ribbon(data = forecast_df, aes(x = Date, ymin = Lower, ymax = Upper),
+              fill = "firebrick", alpha = 0.2, inherit.aes = FALSE) +
+  scale_color_manual(
+    name = "Legend",
+    values = c("Actual" = "steelblue", "Forecast" = "firebrick")
+  ) +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  labs(
+    title = "Cocoa Price Forecast using XGBoost (with 95% CI)",
+    x = "Year",
+    y = "Cocoa Price"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    legend.position = "top",
+    legend.title = element_blank()
+  )
+
+```
 
 # Appendix {-}
 
-```{r}
-
-plot(model$Price)
-# Augmented Dickey-Fuller test
-acf(model$Price, main = "ACF of Original Price Series")
-pacf(model$Price, main = "PACF of Original Price Series")
-
-price_diff <- diff(train$Price)  # first-order difference
-acf(price_diff, main = "ACF of 1st Differenced Price Series")
-pacf(model$Price, main = "PACF of 1st Differenced Price Series")
-
-```
