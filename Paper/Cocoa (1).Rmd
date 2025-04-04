@@ -1,0 +1,1176 @@
+---
+title: "Cocoa Price Prediction Model for Ghana"
+subtitle: "Forecasting Cocoa Price Flutuation Using Time Series"
+author: 
+  - Shanjie Jiao
+  - Edward Hong
+  - Lilian Sun
+  - Haoya Wang
+thanks: "Code and data are available at: https://github.com/Jie-jiao05/Cocoa_price_preditcion."
+date: today
+date-format: long
+abstract: ""
+format:
+  pdf:
+    fig-pos: H
+toc: true
+number-sections: true
+bibliography: references.bib
+---
+
+#Methodology
+
+##Model Description
+We have decided to include three different models and compare their prediction
+abilities, then decide our final model base on the comparisons. 
+
+###1. Generalized Additive Model (GAM)
+Purpose: To model nonlinear relationships between cocoa prices and external variables 
+(e.g., climate, productivity).
+Model Structure:
+
+Distribution: Gamma family with log-link function to ensure positive predictions.
+
+Smoothing Terms: Penalized cubic splines for nonlinear effects of temperature, 
+precipitation, and agricultural inputs.
+
+Advantages:
+
+Captures nonlinear trends (e.g., delayed climate impacts).
+
+Handles multiplicative effects via log transformation.
+
+###2. ARIMAX (Autoregressive Integrated Moving Average with Exogenous Variables)
+Purpose: To model temporal dependencies in prices while incorporating external drivers.
+Model Structure:
+
+Order: ARIMA(0,1,2) after differencing to address non-stationarity.
+
+External Regressors: Temperature, fertilizer use, productivity indices.
+ 
+Advantages:
+
+First-order differencing stabilizes variance.
+
+MA(2) structure captures short-term noise in price fluctuations.
+
+###3. XGBoost (Extreme Gradient Boosting)
+Purpose: To leverage machine learning for nonlinear interactions and complex temporal patterns.
+Model Structure:
+
+Features: 12 lagged price terms + climate/economic variables (e.g., TFP, precipitation).
+
+Hyperparameters: Learning rate (0.1), max depth (6), subsampling (0.8).
+
+Objective: Minimize MSE with early stopping to prevent overfitting.
+
+Advantages:
+
+Superior at modeling nonlinear dynamics (e.g., lagged price effects).
+
+Robust to multicollinearity and missing data.
+
+
+More details about the models, like specifications, will be provided in the Model
+section later on.
+
+
+##Justification
+###1. GAM
+**Theoretical Basis**:  
+- GAMs extend linear models by allowing non-linear relationships via smooth functions (e.g., splines).  
+- Gamma Distribution: Chosen because cocoa prices are strictly positive and continuous, avoiding unrealistic negative predictions.  
+- Log-Link Function: Ensures multiplicative effects (e.g., compounding impacts of rainfall and temperature).  
+
+**Data-Driven Justification**:  
+-Nonlinear Trends: Precipitation (`prep`) and temperature (`Temp`) showed non-monotonicrelationships with prices (e.g., extreme rainfall harms yields, moderate rainfall aids growth).  
+- Smooth Terms: Captured seasonality in Ghana’s cocoa harvest cycles (e.g., `Month_Index` as a cyclic spline).  
+
+
+###2. ARIMAX
+**Theoretical Basis**:  
+- ARIMA models handle non-stationary time series via differencing, while ARIMAX incorporates external drivers (e.g., climate, productivity).  
+
+**Data-Driven Justification**:  
+-Temporal Dependencies: Lagged prices (e.g., `price_lag1`) were significant in exploratory analysis.  
+-Exogenous Drivers: Variables like `TFP_Index` and `Fert` (fertilizer use) showed Granger causality with price changes.  
+
+
+###3. XGBoost 
+**Theoretical Basis**:  
+- Tree-based ensemble methods excel at capturing nonlinear interactions and handling mixed data types.  
+- Regularization: Built-in L1/L2 penalties prevent overfitting, critical for noisy commodity data.  
+
+**Data-Driven Justification**:  
+-Feature Importance: Lagged prices (`lag_1`) and precipitation (`precip_lag6`) dominated predictions, aligning with cocoa’s supply chain dynamics.  
+- Heterogeneous Effects: XGBoost modeled threshold effects (e.g., rainfall >200 mm sharply reduces yields).  
+
+
+
+##Process Data
+In general, we took four steps to prepare our final data.
+First, we renamed a few variables to standardize the names, since some differ among different datasets, such as Dates and Price. We converted the Date variable in all datasets into the Date type, and ensured all data are numeric.
+
+Second, we transformed the cleaned data into analysis-ready formats, like aggregating daily prices to monthly averages, calculating monthly temperature averages, forward-filling annual indices to monthly resolution, and distribute annual production into monthly values using harvest season weights. Moreover, we have decided to use data from 2015 and onwards, and filtered the processed data to only include data after 2015.
+
+Furthermore, we merged all of our datasets into a one whole dataset, where we combined the datasets through the Date.
+
+Lastly, we randomly split merged data into 70% training and 30% testing sets for GAM and ARIMAX, while 80% training and 20% testing sets for XGBosst, and set different seeds respectively.
+
+In particular, we have done some special data processing for the following datasets:
+
+Based on The Ghana Cocoa Report 2024, fertilizer use in Ghana is seasonal, with higher application from May to September before the main cocoa harvest. We applied weighted monthly proportions to reflect this seasonal pattern instead of assuming equal distribution.
+
+```{r}
+monthly_weights1 = c(
+    "Jan" = 0.02, "Feb" = 0.02, "Mar" = 0.05, "Apr" = 0.05,
+    "May" = 0.10, "Jun" = 0.15, "Jul" = 0.15, "Aug" = 0.15,
+    "Sep" = 0.12, "Oct" = 0.08, "Nov" = 0.06, "Dec" = 0.05)
+
+print(monthly_weights1)
+```
+
+Main Crop Season: Roughly lasts from October to March, accounting for 70%–80% of annual production. This is the peak period for cocoa bean output.
+
+Light Crop Season: Approximately from May to August, contributing 20%–30% of annual production.
+
+Other Months (e.g., April and September): Typically transitional or fallow periods with minimal or no production.
+
+Based on cocoa harvest seasons, monthly production weights are assigned to reflect higher yields during peak months:
+```{r}
+monthly_weights2 <- c(
+  'Jan' = 0.15,   # January (Main Crop)
+  'Feb' = 0.15,   # February (Main Crop)
+  'Mar' = 0.10,   # March (End of Main Crop)
+  'Apr' = 0.00,   # April (Transition)
+  'May' = 0.05,   # May (Light Crop)
+  'Jun' = 0.10,   # June (Light Crop)
+  'Jul' = 0.10,   # July (Light Crop)
+  'Aug' = 0.05,   # August (End of Light Crop)
+  'Sep' = 0.00,   # September (Transition)
+  'Oct' = 0.10,  # October (Main Crop)
+  'Nov' = 0.10,  # November (Main Crop)
+  'Dec' = 0.10   # December (Main Crop)
+)
+print(monthly_weights2)
+```
+
+##Data Cleaning
+```{r}
+library(tidyverse)
+library(lubridate)
+
+price_data <- read.csv("Daily_Prices_ICCO.csv")
+climate_data <- read.csv("Ghana_data.csv")
+#dollar <- read.csv("US_Dollar_index_from2006.csv") ##we decided not to include this dataset
+
+# Step 1: Read in the fertilizer data
+fertilizer <- read.csv("fertilizer-consumption-usda.csv")
+
+# Step 2: Filter data from 2015 onwards
+fertilizer <- fertilizer %>%
+  filter(Year >= 2015)
+
+# Step 3: Define monthly weights based on cocoa crop seasonality
+monthly_weights <- c(
+  Jan = 0.02, Feb = 0.02, Mar = 0.05, Apr = 0.05,
+  May = 0.10, Jun = 0.15, Jul = 0.15, Aug = 0.15,
+  Sep = 0.12, Oct = 0.08, Nov = 0.06, Dec = 0.05
+)
+
+# Step 4: Expand annual data into monthly using the weights
+monthly_data <- fertilizer %>%
+  rowwise() %>%
+  mutate(
+    Month = list(1:12),
+    Weight = list(monthly_weights),
+    Monthly_Use = list(fertilizer_quantity * monthly_weights)
+  ) %>%
+  unnest(cols = c(Month, Weight, Monthly_Use)) %>%
+  mutate(Date = as.Date(sprintf("%d-%02d-01", Year, Month))) %>%
+  select(Date, Monthly_Fertilizer_Use = Monthly_Use)
+
+
+price <- price_data %>%
+  rename(
+    Date = Date,
+    Price = `ICCO.daily.price..US..tonne.`
+  ) %>%
+  mutate(
+    Date = dmy(Date),  
+    Price = parse_number(Price)  
+  )
+
+
+climate <- climate_data %>%
+  mutate(
+    DATE = ymd(DATE),  
+    PRCP = as.numeric(PRCP),
+    TAVG = as.numeric(TAVG),
+    TMAX = as.numeric(TMAX),
+    TMIN = as.numeric(TMIN)
+  )
+
+
+#dollar <- dollar %>%
+#  mutate(
+#    Date = ymd(observation_date),
+#    Dollar_index = as.numeric(DTWEXBGS)
+#  )
+  
+ghana_data <- read.csv("cocoa-yields-ghana.csv")
+ghana_data <- ghana_data %>% filter(Year >= 2015)
+
+# 1. Define the start and end of your desired date range
+start_date <- ymd("2015-01-01")
+end_date   <- ymd("2023-12-01")  # adjust as needed
+
+# 2. Create a sequence of monthly dates
+all_months <- seq.Date(from = start_date, to = end_date, by = "1 month")
+
+# 3. Convert this into a data frame
+monthly_calendar <- data.frame(
+  Date = all_months,
+  Year = year(all_months),    # extract year
+  Month = month(all_months)   # extract month (1 to 12)
+)
+
+df_monthly <- monthly_calendar %>%
+  left_join(ghana_data, by = "Year")
+
+
+names(df_monthly)[6] <- "Yield_tonnes_per_hectare"
+
+cleaned_data <- df_monthly %>% select(Date, Yield_tonnes_per_hectare)
+
+
+
+write_csv(climate,"climate.csv")
+write_csv(price,"price.csv")
+#write_csv(dollar,"dollar_index.csv")
+write.csv(cleaned_data, file = "tonnes_per_hectare.csv", row.names = FALSE)
+write.csv(monthly_data, "Monthly_Fertilizer.csv")
+```
+
+
+##Data Processing
+```{r}
+# Load necessary libraries
+library(readr)
+library(dplyr)
+library(tidyr)
+
+price_data <- read_csv("price.csv")
+
+monthly <- price_data %>%
+  mutate(Date = as.Date(Date),
+         Month = ceiling_date(Date, unit = "month") - days(1)) %>%
+  group_by(Month) %>%
+  summarise(Monthly_Avg = mean(Price, na.rm = TRUE)) %>%
+  ungroup()
+
+write_csv(monthly, "price_monthly.csv")
+
+price <- monthly %>%
+  filter(Month >= as.Date("2015-01-01"))
+
+price$Month <- floor_date(price$Month, unit = "month")
+
+price <- price %>% rename(Price = Monthly_Avg)
+
+write_csv(price, "Price.csv")
+
+##################
+
+# Load the climate data
+climate_data <- read.csv("climate.csv")
+
+# Ensure DATE and TAVG are properly formatted
+climate_data <- climate_data %>%
+  mutate(
+    DATE = as.Date(DATE),
+    TAVG = as.numeric(TAVG)
+  ) %>%
+  filter(!is.na(TAVG))  # remove rows with missing temperature
+
+# Step 1: Average per day in case of duplicates
+daily_avg <- climate_data %>%
+  group_by(DATE) %>%
+  summarise(Daily_TAVG = mean(TAVG, na.rm = TRUE)) %>%
+  ungroup()
+
+# Step 2: Average per month
+monthly_climate <- daily_avg %>%
+  mutate(Month = floor_date(DATE, "month")) %>%
+  group_by(Month) %>%
+  summarise(
+    Monthly_Avg_Temp = mean(Daily_TAVG),
+    Valid_Days = n()
+  ) %>%
+  ungroup()
+
+# Save full monthly data
+write_csv(monthly_climate, "climate_monthly.csv")
+
+# Filter for data from 2015 onward
+monthly_climate_filtered <- monthly_climate %>%
+  filter(Month >= as.Date("2015-01-01"))
+
+# Save filtered data
+write_csv(monthly_climate_filtered, "Climate.csv")
+
+#################
+macro <- read_csv("Index.csv")
+library(zoo)
+
+
+# Step 2: 保留关键列并 wide pivot
+macro_wide <- macro %>%
+  select(Year, Variable, Value) %>%
+  pivot_wider(names_from = Variable, values_from = Value)
+
+# Step 3: 添加 Date 列（设为每年1月）
+macro_wide <- macro_wide %>%
+  mutate(Date = ymd(paste0(Year, "-01-01"))) %>%
+  select(-Year)
+
+# Step 4: 创建完整月度序列
+full_months <- tibble(Date = seq(min(macro_wide$Date), max(macro_wide$Date), by = "1 month"))
+
+# Step 5: 合并 & forward fill
+macro_monthly <- full_months %>%
+  left_join(macro_wide, by = "Date") %>%
+  mutate(across(-Date, ~ na.locf(.x, na.rm = FALSE)))  # forward fill 每列
+
+
+write_csv(macro_monthly, "Index_monthly.csv")
+
+macro_monthly <- macro_monthly %>%
+  filter(Date >= as.Date("2015-01-01"))
+
+write_csv(macro_monthly, "Indexes.csv")
+
+################
+# Load the original PRCP data
+PRCP <- read_csv("PRCP_monthly.csv")
+
+# Convert to proper types and format
+PRCP_monthly <- PRCP %>%
+  mutate(
+    date = as.Date(paste0(date, "-01")),  # Convert YYYY-MM to Date (first of month)
+    prep = as.numeric(prep)               # Ensure numeric precipitation
+  )
+
+# Save cleaned monthly data
+write_csv(PRCP_monthly, "PRCP_monthly_data.csv")
+
+# Filter from 2015 onward
+PRCP_filtered <- PRCP_monthly %>%
+  filter(date >= as.Date("2015-01-01"))
+
+# Save the filtered version
+write_csv(PRCP_filtered, "PRCP.csv")
+
+#####################
+Fert<-read_csv("Monthly_Fertilizer.csv")
+
+write_csv(Fert, "Fert.csv")
+
+############
+
+Production<-read_csv("cocoa_bean_production_clean.csv")
+
+# Clean column names if needed
+colnames(Production) <- c("Entity", "Code", "Year", "Production_tonnes")
+
+# Convert production to numeric
+Production$Production_tonnes <- as.numeric(Production$Production_tonnes)
+
+# Define seasonal monthly weights
+monthly_weights <- c(
+  `1` = 0.15,
+  `2` = 0.15,
+  `3` = 0.10,
+  `4` = 0.00,
+  `5` = 0.05,
+  `6` = 0.10,
+  `7` = 0.10,
+  `8` = 0.05,
+  `9` = 0.00,
+  `10` = 0.10,
+  `11` = 0.10,
+  `12` = 0.10
+)
+
+# Expand data to monthly using weights
+monthly_df <- Production %>%
+  rowwise() %>%
+  do({
+    year_row <- .
+    tibble(
+      Entity = year_row$Entity,
+      Code = year_row$Code,
+      Date = seq.Date(as.Date(paste0(year_row$Year, "-01-01")), as.Date(paste0(year_row$Year, "-12-01")), by = "month"),
+      Monthly_Production_tonnes = year_row$Production_tonnes * monthly_weights
+    )
+  }) %>%
+  ungroup()
+
+write_csv(monthly_df, "Production.csv")
+
+###############
+Yield<-read_csv("tonnes_per_hectare.csv")
+
+write_csv(Yield, "Yield.csv")
+```
+
+
+##Data Merging
+```{r}
+# Load datasets
+climate <- read.csv("Climate.csv")
+fert <- read.csv("Fert.csv")
+index <- read.csv("Indexes.csv")
+prcp <- read.csv("PRCP.csv")
+price <- read.csv("Price.csv")
+production <- read.csv("Production.csv")
+yield <- read.csv("Yield.csv")
+
+# Standardize time column names to "Date"
+colnames(climate)[colnames(climate) == "Month"] <- "Date"
+colnames(price)[colnames(price) == "Month"] <- "Date"
+colnames(prcp)[tolower(colnames(prcp)) == "date"] <- "Date"
+
+# All others already use "Date" correctly
+
+# Drop ID columns from production (optional)
+production <- production[, !(colnames(production) %in% c("Entity", "Code"))]
+
+# Check all have a "Date" column
+dfs <- list(climate, fert, index, prcp, price, production, yield)
+stopifnot(all(sapply(dfs, function(df) "Date" %in% colnames(df))))
+
+# Merge all on "Date"
+merged_data <- Reduce(function(x, y) merge(x, y, by = "Date", all = TRUE), dfs)
+
+# Convert Date to proper Date format if it's YYYY-MM or YYYY-MM-DD
+merged_data$Date <- as.Date(paste0(merged_data$Date, "-01"))  # adjust if needed
+
+
+merged_data <- merged_data[order(merged_data$Date), ]
+
+merged_data <- merged_data[, !colnames(merged_data) %in% "Valid_Days"]
+
+
+write_csv(merged_data,"Model.csv" )
+
+# The merging steps above are merely a coding demonstration of how the data can be merged together using R. However, the dataset we used for fitting our models was merged in Excel and is different from the merged dataset produced by the above R code.
+
+```
+
+
+##Data Splitting
+```{r}
+set.seed(522)  # for reproducibility
+
+merged_data<- read_csv("model.csv")
+
+# Total number of rows
+n <- nrow(merged_data)
+
+# Randomly sample 70% of row indices
+train_indices <- sample(1:n, size = floor(0.7 * n), replace = FALSE)
+
+# Split the data
+train_data <- merged_data[train_indices, ]
+test_data <- merged_data[-train_indices, ]
+
+write_csv(train_data,"train.csv" )
+write_csv(test_data,"test.csv" )
+```
+
+
+#Data
+
+##Data Description
+
+###Cocoa Futures Price Data
+We used several datasets to understand and predict cocoa prices. Let us focus on 
+the 2 main datasets provided from the project outline. The first one is Cocoa Futures 
+Price Data, which comes from the International Cocoa Organization (ICCO) that tracks 
+daily cocoa futures prices from March 1994 to February 2025. All transactions were
+reported in US dollars. To make things simpler and reduce day-to-day noise, we aggregated
+the data into the monthly level.
+
+###Climate Data from Ghana
+The second dataset, Climate Data from Ghana, provided by the National Centers for 
+Environmental Information (NCEI), focuses on Ghana’s climate. Ghana is one of the 
+world’s largest cocoa producer making its weather have a big impact on the total 
+cocoa production and hence the cocoa prices. This dataset includes daily rainfall, 
+average temperatures, and the hottest and coldest temperatures each day. We dropped
+all variables other than dates and temperature due to the overwhelmingly amount of 
+missing data. Furthermore, we converted the data into monthly basis serving the 
+same purpose explained previously.
+
+Beyond the provided main datasets, we gathered more data to complement the elements
+lacked in the main datasets, such as cocoa production, cocoa yields, and the use 
+of fertilizers.
+
+###Cocoa bean yields
+We incorporated the Cocoa bean yields dataset, sourced from Our World in Data, into
+our analysis. The dataset contains the yields for cocoa beans which were measured
+in tonnes per hectare. This dataset provide us key insights about the production 
+efficiency of the cocoa beans, which would affect the cocoa prices.
+
+###Fertilizer consumption
+Since the use of fertilizer not only indicates the production of the cocoa beans, 
+but also provides a sense of the cost for producing the beans. Therefore, we added
+the Fertilizer consumption dataset, also sourced from Our World in Data, into consideration.
+The original fertilizer dataset only provided annual totals. Since our analysis is 
+conducted on a monthly time scale, we disaggregated the yearly data into monthly 
+estimates.
+
+###Cocoa bean production
+The total production of cocoa beans directly affects its prices, thus we included
+the Cocoa bean production dataset from Our World in Data to predict future cocoa 
+prices. Since the dataset contains values measured by a yearly basis, we breakdown
+the yearly production into monthly by adjusting through the metric explained ealier.
+
+
+
+### Monthly Precipitation in Ghana
+This dataset tracks monthly rainfall (precipitation) in Ghana from February 1994 
+to December 2023, measured in millimeters (mm). It complements the climate data,
+which we only kept temperatures, we have already incorporated, providing more aspects 
+and data regarding the climate in Ghana. We could use rainfall patterns to predict 
+cocoa production cycles and price fluctuations.
+
+
+##Data Visualization
+
+```{r}
+library(ggplot2)
+library(corrplot)
+library(ggpubr)
+library(psych)
+
+df <- read.csv("model.csv") %>%
+  mutate(Date = as.Date(Date)) %>%        # Convert to date format
+  arrange(Date)                           # Sort chronologically
+```
+
+###Statistical Summaries
+```{r}
+# Numerical summary table
+stats_summary <- df %>%
+  select(-Date) %>%
+  psych::describe(quant = c(0.25, 0.75)) %>%
+  select(-vars, -trimmed, -mad, -range)
+
+print(stats_summary)
+```
+
+```{r}
+library(kableExtra)
+
+knitr::kable(
+  stats_summary,
+  format = "html",
+  digits = 2,
+  caption = "Variables Summary Statistics"
+) %>%
+  kable_styling(
+    "striped",
+    full_width = TRUE,
+    font_size = 12
+  ) %>%
+  scroll_box(
+    width = "100%",
+    height = "500px"
+  )
+
+```
+
+```{r}
+# Monthly price statistics
+##Decided not to include in the main body of our projetc
+price_stats <- df %>%
+  group_by(month = format(Date, "%b")) %>%
+  summarise(
+    avg_price = mean(Price),
+    min_price = min(Price),
+    max_price = max(Price),
+    .groups = 'drop'
+  )
+
+print(price_stats)
+```
+
+###Time Series Trends
+```{r}
+ggplot(df, aes(x = Date, y = Price)) +
+  geom_line(color = "#1E90FF", linewidth = 0.8) +
+  labs(title = "Cocoa Price Trend (2015-2023)",
+       x = "Date", y = "Price (USD/tonne)") +
+  theme_minimal()
+```
+
+
+###Climate-Price Relationship
+```{r}
+##
+ggplot(df, aes(x = prep, y = Price)) +
+  geom_point(color = "#228B22", alpha = 0.7) +
+  geom_smooth(method = "loess", color = "#FF4500") +
+  labs(title = "Price vs Precipitation",
+       x = "Monthly Rainfall (mm)", y = "Price") +
+  theme_bw()
+```
+
+###Temperature Distribution
+```{r}
+ggplot(df, aes(x = Temp)) +
+  geom_histogram(fill = "#FFA500", bins = 20, alpha = 0.8) +
+  labs(title = "Temperature Distribution",
+       x = "Average Temperature (°F)", y = "Frequency") +
+  theme_minimal()
+```
+
+###Seasonal Price Patterns
+```{r}
+ggplot(df, aes(x = format(Date, "%m"), y = Price)) +
+  geom_boxplot(fill = "#6A5ACD", alpha = 0.7) +
+  scale_x_discrete(labels = month.abb) +
+  labs(title = "Seasonal Price Distribution",
+       x = "Month", y = "Price") +
+  theme_classic()
+```
+
+###Correlation Matrix
+```{r}
+cor_matrix <- cor(df %>% select(Price, Temp, prep, TFP_Index, Yield_tonnes_per_hectare))
+corrplot(
+  cor_matrix, 
+  method = "color",
+  tl.col = "black",     # Text label color
+  tl.cex = 0.8,         # Smaller variable names (default = 1)
+  number.cex = 0.7,     # Smaller correlation coefficients
+  addCoef.col = "black",
+  title = "Variable Correlation Matrix",
+  mar = c(0, 0, 2, 0)  # Adjust margins to prevent title cutoff
+)
+```
+
+
+###Production vs Yield
+```{r}
+ggplot(df, aes(x = Production_tonnes, y = Yield_tonnes_per_hectare)) +
+  geom_point(color = "#20B2AA") +
+  geom_smooth(method = "lm", color = "#FF6347") +
+  labs(title = "Production vs Yield",
+       x = "Production (Tonnes)", y = "Yield (Tonnes/Hectare)") +
+  theme_minimal()
+```
+
+
+
+### Lagged precipitation impact (6-month lag)
+```{r}
+df_lagged <- df %>%
+  mutate(precip_lag6 = lag(prep, 6))
+
+ggplot(df_lagged, aes(x = precip_lag6, y = Price)) +
+  geom_point(color = "#4682B4") +
+  geom_smooth(method = "gam", color = "#FF4500") +
+  labs(title = "6-Month Lagged Precipitation Impact",
+       x = "Precipitation (mm, 6-month lag)", y = "Price") +
+  theme_bw()
+```
+
+
+
+
+
+```{r}
+#| include: false
+#| warning: false
+#| message: false
+library(tidyverse)
+library(forecast)
+library(tseries)
+library(mgcv)
+library(tseries)
+library(astsa)
+# Loading
+model <- read.csv("model.csv")
+test <- read.csv("test.csv")
+train <- read.csv("train.csv")
+
+```
+
+# Model
+This study aims to develop a predictive model to capture future fluctuations in cocoa prices. To enhance the model's forecasting accuracy, a range of exogenous variables are considered, spanning both agricultural asepcts and macroeconomic dimensions. Climatic factors such as precipitation and temperature are considered due to their indirect influence on market prices through their effects on cocoa yield, which is considered as the most important factor pushing cocoa price. In addition, agricultural indicators—including labor input, cultivated area, yield per hectare—as well as productivity-related metrics such as total factor productivity (TFP), are integrated into the framework to comprehensively evaluate their potential impact on price. By incorporating these variables, we hope to explore how these environmental and economic variables explain their impact on cocoa prices.
+
+To investigate the potential impact of external variables on cocoa prices, the Generalized Additive Model (GAM), Autoregressive Integrated Moving Average (ARIMA), and Generalized Autoregressive Conditional Heteroskedasticity (GARCH) models are considered as candidate approaches.
+
+## Model Set-up
+### Generalized Additive Model (GAM)
+Price, as the response variable in this study, is continuous, strictly positive, and reflects actual measured values rather than frequencies or binary outcomes for decision-making purposes. Thus, the Gamma distribution is selected. The use of a log link function ensures that predicted prices remain positive and allows the model to capture nonlinear and multiplicative relationships between the response and explanatory variables. This makes the Gamma distribution a theoretically appropriate and practically robust choice for modeling the influence of external factors on cocoa prices.
+
+Since the dataset is organized by month (from January 2015 to December 2023) and includes only the Ghana region, there is no hierarchical or nested structure in the data. Furthermore, the temporal dimension is explicitly available through the monthly time variable. Therefore, random effects are not included in the model; instead, we focus on fixed effects, along with a smooth function of time. The smooth term is incorporated to capture nonlinear trends in the response over time. Additionally, since the outcome variable is cocoa price, a continuous quantity rather than a rate or count so offset term will not be considered in the model.
+
+The model is defined as follows:
+
+$$
+\begin{aligned}
+Y_t \mid U &\sim \text{Gamma}(\mu_t, \theta), \quad g(\mu_t) = X_t \beta + U(t) \\
+g(\mu_t) = \log(\mu_t) &= 
+\beta_0 + s_1(\text{Month\_Index}_t) + s_2(\text{Temp}_t) + s_3(\text{Fert}_t) + s_4(\text{TFP\_Index}_t) \\
+&+ s_5(\text{Capital\_Index}_t) + s_6(\text{Land\_Q}_t) + s_7(\text{Labor\_Q}_t) + s_8(\text{Cropland\_Q}_t) \\
+&+ s_9(\text{prep}_t) + \beta_{10} \cdot \text{Production\_tonnes}_t + \beta_{11} \cdot \text{Yield\_tonnes\_per\_hectare}_t \\
+&+ U(t) \\
+U(t) &\sim \text{IWP}_2(\sigma) \quad \text{(Smooth Trend)}
+\end{aligned}
+$$
+
+```{r}
+#| message: false
+#| warning: false
+#| include: false
+train$Date <- as.Date(train$Date)  # Convert Date column
+train$Month_Index <- as.numeric(as.factor(train$Date))  # Numeric index for smooth time trend
+
+gam_model <- gam(Price ~ 
+                   s(Month_Index) +
+                   s(Temp) +
+                   s(Fert) +
+                   s(TFP_Index) +
+                   s(Capital_Index) +
+                   s(Land_Q) +
+                   s(Labor_Q) +
+                   s(Cropland_Q) +
+                   s(prep) +
+                   Production_tonnes +               # use linear
+                   Yield_tonnes_per_hectare,         # use linear
+                 family = Gamma(link = "log"),
+                 data = train)
+```
+
+```{r}
+#| eval: false
+#| include: false
+# Predict using the fitted GAM model
+test$Date <- as.Date(test$Date)  # Convert Date column
+test$Month_Index <- as.numeric(as.factor(test$Date))  # Numeric index for smooth time trend
+pred_gam <- predict(gam_model, newdata = test, type = "response")
+
+aic_gam <- AIC(gam_model)
+rmse_gam <- sqrt(mean((pred_gam - test$Price)^2))
+r2_gam <- 1 - (sum((pred_gam - test$Price)^2) / sum((test$Price - mean(test$Price))^2))
+
+aic_gam
+rmse_gam
+r2_gam
+```
+
+### Autoregressive Integrated Moving Average (ARIMA)
+The second model we select is an ARIMAX model. Our dataset provides accurate monthly records from January 2015 to December 2023, along with a range of potentially influential external variables such as temperature, fertilizer use, and productivity indicators. For the standard ARIMA model, which accounts only for a univariate time series, the ARIMAX framework enhances forecasting accuracy by incorporating both temporal dependencies and external factors. By addressing non-stationarity via differencing, it help to stabilizes the data and facilitates more reliable model construction.
+
+From the initial plot of the cocoa price data, there is no clear evidence of a seasonal trend, as the series appears to fluctuate irregularly over time. However, the ACF and PACF plots of the original (undifferenced) series reveal signs of non-stationarity, as the ACF decay slowly. To address this, we apply first-order differencing, which yields a series that appears stationary. The ACF and PACF plots of the differenced series indicate an moving average structure of order 2. Based on these diagnostics, we propose an ARIMA(0,1,2) with external regressors model for the cocoa price series.
+
+The model is defined as follows:
+
+$$
+\begin{aligned}
+\Delta y_t =\ 
+& \theta_1 w_{t-1} + \theta_2 w_{t-2} \\
+& + \beta_1 \cdot \text{Temp}_t + \beta_2 \cdot \text{Fert}_t + \beta_3 \cdot \text{TFP\_Index}_t \\
+& + \beta_4 \cdot \text{Capital\_Index}_t + \beta_5 \cdot \text{Land\_Q}_t + \beta_6 \cdot \text{Labor\_Q}_t \\
+& + \beta_7 \cdot \text{Cropland\_Q}_t + \beta_8 \cdot \text{prep}_t + \beta_9 \cdot \text{Production\_tonnes}_t \\
+& + \beta_{10} \cdot \text{Yield\_tonnes\_per\_hectare}_t + w_t, \quad w_t \sim \mathcal{N}(0, \sigma^2)
+\end{aligned}
+$$
+
+
+$$
+\varepsilon_t \sim \mathcal{N}(0, \sigma^2)
+$$
+
+
+```{r}
+#| echo: false
+library(forecast)
+
+
+# Clean model and regressors (already checked for NA)
+model_clean <- model  # (already clean from your summary)
+xreg_all <- model_clean %>% select(-Date, -Price)
+
+# Fit ARIMAX(0,1,2) with fixed order and external regressors
+arimax_model <- Arima(model_clean$Price,
+                      order = c(0, 1, 2),
+                      xreg = as.matrix(xreg_all))
+
+```
+
+```{r}
+#| include: false
+# Step 1: Define your external regressors used in the model
+xreg_vars <- c(
+  "Temp", "Fert", "TFP_Index", "Capital_Index", "Land_Q",
+  "Labor_Q", "Cropland_Q", "prep", "Production_tonnes", 
+  "Yield_tonnes_per_hectare"
+)
+
+# Step 2: Forecast on the test set using xreg
+forecast_arimax <- forecast(arimax_model, xreg = as.matrix(test[, xreg_vars]), h = nrow(test))
+pred_arimax <- forecast_arimax$mean
+
+# Step 3: AIC (from training fit)
+aic_arimax <- AIC(arimax_model)
+
+# Step 4: RMSE (on test data)
+rmse_arimax <- sqrt(mean((pred_arimax - test$Price)^2))
+
+# Step 5: R² (on test data)
+r2_arimax <- 1 - (sum((pred_arimax - test$Price)^2) / sum((test$Price - mean(test$Price))^2))
+
+aic_arimax
+rmse_arimax
+r2_arimax
+```
+### Machine Learning --- XGBoost
+Under this research, we aim focus on accurately forecasting cocoa prices under conditions of complex and volatile market fluctuations. While traditional time series models are effective at capturing linear relationships and structured temporal dependencies, they often fall short when modeling the nonlinear dynamics commonly found in agricultural commodity markets. To address these limitations, we adopt a machine learning approach by employing an XGBoost model with lagged price features to forecast future cocoa prices. By incorporating twelve lagged values of the price series, the model effectively utilizes historical information to learn intricate patterns, address the nonlinearities previously identified, and contribute to a more robustic model.
+
+The XGBoost framework is defined as follows:
+
+$$
+\hat{y}_t = \sum_{k=1}^{K} f_k(\mathbf{x}_t), \quad f_k \in \mathcal{F}
+$$
+
+\begin{itemize}
+  \item \( \hat{y}_t \): predicted cocoa price at time \( t \)
+  \item \( \mathbf{x}_t \): feature vector consisting of lagged cocoa prices
+  \item \( f_k \): the \( k \)-th regression tree
+  \item \( \mathcal{F} \): the functional space of all possible regression trees
+  \item \( K \): total number of boosting iterations (trees)
+\end{itemize}
+
+
+```{r}
+#| include: false
+
+set.seed(787)
+library(dplyr)
+library(xgboost)
+cocoa_data <- model
+# Create lag features - here we use 12 lags (you can adjust look_back as needed)
+look_back <- 12
+for (lag_i in 1:look_back) {
+  cocoa_data <- cocoa_data %>%
+    mutate(!!paste0("lag_", lag_i) := dplyr::lag(Price, n = lag_i))
+}
+
+
+# Remove rows with missing values (first 'look_back' rows will have NA)
+cocoa_data <- na.omit(cocoa_data)
+
+# Check the first few rows to confirm lag features
+head(cocoa_data)
+
+# Use an 80/20 train-test split
+train_index <- sample(seq_len(nrow(cocoa_data)), size = 0.8 * nrow(cocoa_data))
+train_data <- cocoa_data[train_index, ]
+test_data <- cocoa_data[-train_index, ]
+
+# Prepare the predictor matrix (features) and response vector (target)
+feature_cols <- paste0("lag_", 1:look_back)
+
+# Convert to matrix format for xgboost
+train_matrix <- as.matrix(train_data[, feature_cols])
+train_label <- train_data$Price
+
+test_matrix <- as.matrix(test_data[, feature_cols])
+test_label <- test_data$Price
+
+# Create DMatrix objects for xgboost
+dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
+dtest  <- xgb.DMatrix(data = test_matrix, label = test_label)
+
+# Set XGBoost parameters
+params <- list(
+  objective = "reg:squarederror",  # regression
+  eval_metric = "rmse",             # evaluation metric: Root Mean Squared Error
+  eta = 0.1,                        # learning rate
+  max_depth = 5                     # tree depth
+)
+
+# Train the model
+xgb_model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 100,
+  watchlist = list(train = dtrain, test = dtest),
+  early_stopping_rounds = 10,
+  print_every_n = 10
+)
+
+predictions <- predict(xgb_model, newdata = test_matrix)
+
+```
+
+```{r}
+#| eval: false
+#| include: false
+y_actual <- test_data$Price
+y_pred   <- predictions
+
+# Calculate Root Mean Squared Error (RMSE)
+rmse <- sqrt(mean((y_actual - y_pred)^2))
+
+# Calculate Mean Absolute Error (MAE)
+mae <- mean(abs(y_actual - y_pred))
+
+# Calculate Mean Absolute Percentage Error (MAPE)
+# Be careful if any actual value is zero, which would cause division by zero.
+mape <- mean(abs((y_actual - y_pred) / y_actual)) * 100
+
+# Calculate R-squared (Coefficient of Determination)
+ss_res <- sum((y_actual - y_pred)^2)
+ss_tot <- sum((y_actual - mean(y_actual))^2)
+r_squared <- 1 - (ss_res / ss_tot)
+
+# Print the metrics
+cat("RMSE:", round(rmse, 2), "\n")
+cat("MAE:", round(mae, 2), "\n")
+cat("MAPE:", round(mape, 2), "%\n")
+cat("R-squared:", round(r_squared, 2), "\n")
+
+```
+
+
+
+## Final Model
+The performance metrics for the three models—ARIMAX, GAM, and the machine learning-based XGBoost—are summarized in @tbl-model_result. Among these, the XGBoost model demonstrates superior predictive performance, achieving the lowest RMSE (148.94) and the highest R² (0.92), illustrating that approximately 92% of the variation in cocoa prices in the test set can be explained by this model. In addition, the XGBoost model achieves a considerably low MAE (107.15) and MAPE (4.08%), further validating its accuracy and reliability. The consistently strong performance across multiple evaluation metrics highlights XGBoost's capability to deliver precise and robust forecasts.
+In contrast, the traditional statistical models exhibit higher error rates and negative R² values, suggesting poor generalization to out-of-sample data. Given these findings, the XGBoost model is selected as the final forecasting model for this study
+```{r}
+#| label: tbl-model_result
+#| echo: false
+#| tbl-align: center
+#| warning: false
+#| message: false
+
+library(knitr)
+
+# Create model performance summary table
+results <- data.frame(
+  Model = c("XGBoost", "ARIMAX", "GAM"),
+  AIC = c(NA, 1357.807, 953.5679),              # AIC not applicable for XGBoost
+  RMSE = c(148.94, 1588.224, 682.3146),
+  MAE = c(107.15, NA, NA),                      # Only XGBoost reported MAE
+  MAPE = c("4.08%", NA, NA),                    # Only XGBoost reported MAPE
+  R_squared = c(0.92, -11.86373, -1.374175)
+)
+
+# Print the table using kable (which supports centering)
+kable(results, caption = "Model Result", digits = 3, align = "c")
+
+```
+# Results
+## Model Performance Validation
+@fig-actpre The predicted cocoa prices generated by our XGBoost model align closely with the actual observed values across the entire time period. This result highly align with the model’s statistical performance, as reflected by a high R² value of 0.92. Where our model demonstrates strong capability in capturing both short-term fluctuations and long-term trends in cocoa price.
+
+```{r}
+#| label: fig-actpre
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: Actual vs. Predicted Cocoa Prices
+#| fig-height: 3
+#| fig-width: 8
+library(ggplot2)
+library(scales)
+
+df_plot <- data.frame(
+  Date = test_data$Date,
+  Actual = test_label,
+  Predicted = predictions
+)
+
+df_plot$Date <- as.Date(df_plot$Date)
+
+ggplot() +
+  geom_line(
+    data = df_plot,
+    aes(x = Date, y = Actual, color = "Actual", group = 1),
+    lwd = 1
+  ) +
+  geom_line(
+    data = df_plot,
+    aes(x = Date, y = Predicted, color = "Predicted", group = 2),
+    lwd = 1, linetype = "dashed"
+  ) +
+  labs(
+    title = "Actual vs. Predicted Cocoa Prices",
+    x = "Year",
+    y = "Cocoa Price"
+  ) +
+  scale_color_manual(values = c("Actual" = "blue", "Predicted" = "red")) +
+  scale_x_date(date_labels = "%Y") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.title.position = "plot"  # ✅ Fixes true centering
+  )
+
+```
+## Model Lag Check
+It is evident from @fig-lag that lag_1 by far has the highest importance, our model heavily relieson the cocoa price from one month ago. This finding aligns with real-world financial behavior, where more recent observations typically have a stronger influence on current prices, while distant past data tends to carry less predictive power. Conversely, some lag features such as lag_11 and lag_2 show near-zero contribution, suggesting that the model did not find time at that lag is significant for prediction.
+```{r}
+#| label: fig-lag
+#| fig-cap: Model lag information
+#| echo: false
+#| fig-align: center
+
+library(ggplot2)
+
+# Prepare importance data
+importance_matrix <- xgb.importance(model = xgb_model)
+
+# Take top 12 features
+top_features <- importance_matrix[1:12, ]
+
+# Plot with ggplot2
+ggplot(top_features, aes(x = reorder(Feature, Gain), y = Gain)) +
+  geom_col(fill = "grey") +
+  coord_flip() +
+  labs(
+    title = "Lag Feature Importance (XGBoost)",
+    x = "Lag Feature",
+    y = "Relative Importance"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text = element_text(size = 10)
+  )
+
+```
+
+
+## Residual Check
+To evaluate the adequacy of the XGBoost model, we conducted a residual diagnostic analysis using a histogram, residuals vs. predicted plot, and the autocorrelation function (ACF) of the residuals. 
+
+@fig-his shows that the residuals are approximately symmetrically distributed around zero, indicating that the model does not systematically over or under predict. The @fig-dot residuals vs. predicted plot reveals no discernible pattern or signs of heteroskedasticity, suggesting that the variance of the errors remains consistent across different levels of predicted values. However, it is important to note that due to the limited size of the dataset, only a small portion was allocated to the test set, which may affect the robustness of these diagnostics. Lastly, @fig-acf the ACF plot of the residuals shows no significant autocorrelation beyond lag zero, confirming that the model has effectively captured the temporal structure in the data.
+
+```{r}
+#| label: fig-his
+#| fig-cap: Residual Histogram
+#| echo: false
+#| fig-align: center
+
+residuals <- test_label - predictions
+
+# Histogram of residuals
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+
+```
+
+```{r}
+#| label: fig-dot
+#| fig-cap: Dot Plot of Residuals vs Predicted Value
+#| echo: false
+#| fig-align: center
+# Residuals vs predicted
+plot(predictions, residuals, main = "Residuals vs Predicted", 
+     xlab = "Predicted", ylab = "Residuals")
+abline(h = 0, col = "red")
+
+```
+```{r}
+#| label: fig-acf
+#| fig-cap: Residual ACF
+#| echo: false
+#| fig-align: center
+acf(residuals, main = "ACF of Residuals")
+
+
+```
+## Forecasting  
+@fig-pre  illustrates the projected cocoa prices generated by the XGBoost model for the next 2 years (2025-02 to 2026-12), with a 95% confidence interval shaded in red. The forecast demonstrates a downward trend following the recent price peak, while the confidence band captures the expected range of uncertainty in future price movements.
+
+Following a sharp increase in cocoa prices toward the end of 2023, the model forecasts a downward trend, with prices gradually returning to levels comparable to those seen in 2023-01. In early 2025, the model suggests a brief rebound, followed by another period of decline. It is important to note that future price in realistic will inevitably be influenced by seasonal fluctuations in production, changes in labor and transportation costs, and broader macroeconomic conditions affecting global commodity markets. These predictions are based solely on the available dataset and should be interpreted as model-based estimations rather than a definitive forecasts.
+
+
+```{r}
+#| label: fig-pre
+#| echo: false
+#| fig-align: center
+#| fig-cap: Cocoa Price Prediction Using XGBoost with Confidence Interval
+# Step 1: Compute residual standard deviation
+residuals <- test_label - predictions
+resid_sd <- sd(residuals, na.rm = TRUE)
+z_val <- 1.96  # for 95% confidence interval
+
+# Step 2: Forecast future values
+cocoa_data$Date <- as.Date(cocoa_data$Date)
+last_obs <- cocoa_data %>% tail(1)
+look_back <- 12
+feature_cols <- paste0("lag_", 1:look_back)
+lag_vector <- as.numeric(last_obs[feature_cols])
+forecast_horizon <- 24
+future_forecasts <- numeric(forecast_horizon)
+future_upper <- numeric(forecast_horizon)
+future_lower <- numeric(forecast_horizon)
+last_date <- last_obs$Date
+
+for (i in 1:forecast_horizon) {
+  dfuture <- xgb.DMatrix(data = matrix(lag_vector, nrow = 1))
+  pred <- predict(xgb_model, newdata = dfuture)
+  
+  future_forecasts[i] <- pred
+  future_upper[i] <- pred + z_val * resid_sd
+  future_lower[i] <- pred - z_val * resid_sd
+  
+  lag_vector <- c(lag_vector[-1], pred)
+}
+
+# Step 3: Build the forecast dataframe
+future_dates <- seq(last_date %m+% months(1), by = "month", length.out = forecast_horizon)
+
+forecast_df <- data.frame(
+  Date = future_dates,
+  Forecast = future_forecasts,
+  Lower = future_lower,
+  Upper = future_upper
+)
+
+# Step 4: Plot
+ggplot() +
+  geom_line(data = cocoa_data, aes(x = Date, y = Price, color = "Actual"), linewidth = 1.2) +
+  geom_line(data = forecast_df, aes(x = Date, y = Forecast, color = "Forecast"),
+            linewidth = 1.2, linetype = "dashed", alpha = 0.9) +
+  geom_ribbon(data = forecast_df, aes(x = Date, ymin = Lower, ymax = Upper),
+              fill = "firebrick", alpha = 0.2, inherit.aes = FALSE) +
+  scale_color_manual(
+    name = "Legend",
+    values = c("Actual" = "steelblue", "Forecast" = "firebrick")
+  ) +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  labs(
+    title = "Cocoa Price Forecast using XGBoost (with 95% CI)",
+    x = "Year",
+    y = "Cocoa Price"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    legend.position = "top",
+    legend.title = element_blank()
+  )
+
+```
+
+# Appendix {-}
+
